@@ -781,35 +781,38 @@ Example: {{"customer_name": "7-Eleven", "meeting_date": "Nov 12, 2024"}}"""
   async def _process_predefined_category(self, text: str, category) -> CategoryResult:
     """Process a category with predefined values using document comprehension."""
     
-    # Ultra-short guidance for Vector Search schema categories
+    # Minimal guidance for Vector Search schema categories
     if category.name == "Usage Pattern":
-      guidance = "How do they use it? Real Time=instant, Batch=scheduled, Interactive=queries, Scheduled=automated."
+      guidance = "How do they use it?"
 
     elif category.name == "Product":
-      guidance = "Which Databricks products are mentioned?"
+      guidance = "Which products?"
 
     elif category.name == "Search Tags":  
-      guidance = "What search features? RAG=retrieval, Matching=similar, Search=find, Similarity=compare."
+      guidance = "What search features?"
 
     elif category.name == "Unstructured Tags":
-      guidance = "What data processing? RAG=retrieval, Automation=workflows, Document Processing=parsing, Text Analysis=NLP."
+      guidance = "What data processing?"
 
     elif category.name == "End User Tags":
-      guidance = "Who uses it? Internal=employees, External=customers, Customer-Facing=public, Partner=third-party."
+      guidance = "Who uses it?"
 
     elif category.name == "Production Status":
-      guidance = "What stage? Production=live, Development=building, POC=trial, Planning=future."
+      guidance = "What stage?"
 
     else:
-      guidance = f"Select options for {category.name}."
+      guidance = f"Select for {category.name}."
     
-    prompt = f"""Options: {', '.join(category.possible_values)}
+    # Ultra-minimal prompt to avoid empty responses
+    key_text = text[:200]
+    
+    prompt = f"""{', '.join(category.possible_values)}
 
 {guidance}
 
-Text: "{text}"
+"{key_text}"
 
-JSON: {{"values": ["option"], "evidence": ["text"], "confidence": 0.9}}"""
+{{"values": ["option"], "evidence": ["text"], "confidence": 0.9}}"""
 
     # Try Databricks Foundation Model first
     print(f"\n=== PREDEFINED CATEGORY EXTRACTION: {category.name} ===")
@@ -928,19 +931,22 @@ JSON: {{"values": ["option"], "evidence": ["text"], "confidence": 0.9}}"""
     else:
       guidance = f"Read the document and understand what they describe related to {category.name}."
     
+    # Ultra-minimal prompt to avoid empty responses
+    key_text = text[:200]
+    
     # Special handling for Industry to ensure single value
     if category.name == "Industry":
       prompt = f"""{guidance}
 
-Text: "{text}"
+"{key_text}"
 
-Return JSON only: {{"values": ["industry"], "evidence": ["text"], "confidence": 0.9}}"""
+{{"values": ["industry"], "evidence": ["text"], "confidence": 0.9}}"""
     else:
       prompt = f"""{guidance}
 
-Text: "{text}"
+"{key_text}"
 
-JSON: {{"values": ["value"], "evidence": ["text"], "confidence": 0.9}}"""
+{{"values": ["value"], "evidence": ["text"], "confidence": 0.9}}"""
 
     # Try Databricks Foundation Model first
     print(f"\n=== INFERRED CATEGORY EXTRACTION: {category.name} ===")
