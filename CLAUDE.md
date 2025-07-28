@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Databricks App Template Development Guide
 
 ## Project Memory
@@ -27,10 +31,12 @@ This is a modern full-stack application template for Databricks Apps, featuring 
 - Always check if dependencies exist in the project before adding new ones
 
 ### Development Commands
-- `./setup.sh` - Interactive environment setup and dependency installation
-- `./watch.sh` - Start development servers with hot reloading (frontend:5173, backend:8000)
-- `./fix.sh` - Format code (ruff for Python, prettier for TypeScript)
-- `./deploy.sh` - Deploy to Databricks Apps
+- `./setup.sh` - Interactive environment setup and dependency installation (supports `--auto-close` flag)
+- `./watch.sh` - Start development servers with hot reloading (frontend:5173, backend:8000, supports `--prod` flag)
+- `./fix.sh` - Format code (ruff for Python, prettier for TypeScript) and type check with ty
+- `./deploy.sh` - Deploy to Databricks Apps (supports `--verbose` and `--create` flags)
+- `./app_status.sh` - Check deployed app status (supports `--verbose` flag)
+- `./run_app_local.sh` - Run app locally for debugging (supports `--verbose` flag)
 
 ### 🚨 IMPORTANT: NEVER RUN THE SERVER MANUALLY 🚨
 
@@ -146,9 +152,11 @@ Claude understands natural language commands for common development tasks:
 
 ### Code Quality
 - Use `./fix.sh` for code formatting before commits
-- Python: ruff for formatting and linting, ty for type checking
-- TypeScript: prettier for formatting, ESLint for linting
-- Type checking with TypeScript and ty (Python)
+- Python: ruff for formatting and linting (configuration in pyproject.toml), ty for type checking
+- TypeScript: prettier for formatting, ESLint for linting (configured in client/package.json)
+- Type checking with TypeScript (via tsc) and ty (Python)
+- Ruff configuration: line length 100, target Python 3.12, auto-fix enabled
+- Follow Google docstring conventions for Python
 
 ### API Development
 - FastAPI automatically generates OpenAPI spec
@@ -167,12 +175,14 @@ Claude understands natural language commands for common development tasks:
 - Check official documentation links in each API guide for latest updates
 
 ### Frontend Development
-- Use shadcn/ui components for consistent UI
-- Follow React Query patterns for API calls
+- Use shadcn/ui components for consistent UI (Radix UI primitives with Tailwind CSS)
+- Follow React Query (@tanstack/react-query) patterns for API calls and state management
 - Use TypeScript strictly - no `any` types
 - Import from auto-generated client: `import { apiClient } from '@/fastapi_client'`
 - Client uses shadcn/ui components with proper TypeScript configuration
-- shadcn components must be added with: npx shadcn@latest add <component-name>
+- shadcn components must be added with: `bunx shadcn@latest add <component-name>`
+- Frontend build process uses Vite with SWC for fast compilation
+- Icons: Use Lucide React (@lucide-react) or Tabler Icons (@tabler/icons-react)
 
 ### Testing Methodology
 - Test API endpoints using FastAPI docs interface
@@ -203,15 +213,37 @@ Claude understands natural language commands for common development tasks:
 - **Check process status**: `ps aux | grep databricks-app` or check PID file at `/tmp/databricks-app-watch.pid`
 - **Force stop**: `kill $(cat /tmp/databricks-app-watch.pid)` or `pkill -f watch.sh`
 
-### Key Files
-- `server/app.py` - FastAPI application entry point
-- `server/routers/` - API endpoint routers
+### Project Architecture & Key Files
+
+**Backend Structure:**
+- `server/app.py` - FastAPI application entry point with CORS and static file serving
+- `server/routers/` - API endpoint routers (included at `/api` prefix)
+- `server/services/` - Business logic and service layer
+- `server/make_openapi.py` - OpenAPI spec generation script
+- `scripts/make_fastapi_client.py` - TypeScript client generator from OpenAPI spec
+- `scripts/generate_semver_requirements.py` - Requirements.txt generator from pyproject.toml
+
+**Frontend Structure:**
 - `client/src/App.tsx` - React application entry point
 - `client/src/pages/` - React page components
-- `scripts/make_fastapi_client.py` - TypeScript client generator
-- `pyproject.toml` - Python dependencies and project configuration
-- `client/package.json` - Frontend dependencies and scripts
+- `client/src/components/ui/` - shadcn/ui components
+- `client/src/fastapi_client/` - Auto-generated TypeScript API client
+- `client/src/lib/utils.ts` - Utility functions and helpers
+- `client/index.html` - HTML entry point for Vite
+
+**Configuration Files:**
+- `pyproject.toml` - Python dependencies, ruff config, project metadata
+- `client/package.json` - Frontend dependencies and build scripts
+- `app.yaml` - Databricks Apps deployment configuration (minimal: just uvicorn command)
+- `.env.local` - Local environment variables (not in version control)
+- `client/components.json` - shadcn/ui configuration
+- `client/tailwind.config.js` - Tailwind CSS configuration
+- `client/vite.config.ts` - Vite bundler configuration
+
+**Development & Deployment:**
 - `claude_scripts/` - Test scripts created by Claude for testing functionality
+- `build/` - Build artifacts directory
+- `client/build/` - Frontend build output (served by FastAPI in production)
 
 ### API Documentation
 - `docs/databricks_apis/` - Comprehensive API documentation for Databricks integrations

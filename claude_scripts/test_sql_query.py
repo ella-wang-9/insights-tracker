@@ -60,7 +60,7 @@ def execute_sql_query(sql_query):
           print('\nResult Schema:')
           print('-' * 40)
           for i, column in enumerate(response.manifest.schema.columns):
-            print(f'Column {i+1}: {column.name} ({column.type_name})')
+            print(f'Column {i + 1}: {column.name} ({column.type_name})')
           print()
 
         # Print result data
@@ -109,9 +109,9 @@ if __name__ == '__main__':
 
   # Check environment variables
   print('Environment check:')
-  print(f"DATABRICKS_HOST: {'✓' if os.getenv('DATABRICKS_HOST') else '✗'}")
-  print(f"DATABRICKS_TOKEN: {'✓' if os.getenv('DATABRICKS_TOKEN') else '✗'}")
-  print(f"DATABRICKS_CONFIG_PROFILE: {os.getenv('DATABRICKS_CONFIG_PROFILE', 'Not set')}")
+  print(f'DATABRICKS_HOST: {"✓" if os.getenv("DATABRICKS_HOST") else "✗"}')
+  print(f'DATABRICKS_TOKEN: {"✓" if os.getenv("DATABRICKS_TOKEN") else "✗"}')
+  print(f'DATABRICKS_CONFIG_PROFILE: {os.getenv("DATABRICKS_CONFIG_PROFILE", "Not set")}')
   print()
 
   try:

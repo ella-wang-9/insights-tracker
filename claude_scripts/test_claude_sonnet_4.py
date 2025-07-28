@@ -41,7 +41,7 @@ def test_claude_sonnet_4():
       'temperature': 0.7,
     }
 
-    print(f"\n📤 Sending query: {chat_input['messages'][0]['content']}")
+    print(f'\n📤 Sending query: {chat_input["messages"][0]["content"]}')
 
     # Query the endpoint using the SDK's query method
     print('📡 Querying endpoint...')
@@ -108,10 +108,10 @@ def test_claude_sonnet_4():
         print(f'Answer: {answer}')
       elif 'content' in result:
         # Direct content response
-        print(f"Answer: {result['content']}")
+        print(f'Answer: {result["content"]}')
       elif 'response' in result:
         # Response field
-        print(f"Answer: {result['response']}")
+        print(f'Answer: {result["response"]}')
       else:
         # Print full response if format is unknown
         print(f'Full response: {json.dumps(result, indent=2)}')

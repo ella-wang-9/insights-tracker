@@ -64,7 +64,7 @@ def query_trace_logs():
 
       # Print each column and its value
       for i, (field, value) in enumerate(zip(df.schema.fields, row)):
-        print(f'Column {i+1}: {field.name}')
+        print(f'Column {i + 1}: {field.name}')
         print(f'  Type: {field.dataType}')
         print(f'  Value: {value}')
         print(f'  Value Type: {type(value)}')
@@ -109,9 +109,9 @@ if __name__ == '__main__':
 
   # Check environment variables
   print('Environment check:')
-  print(f"DATABRICKS_HOST: {'✓' if os.getenv('DATABRICKS_HOST') else '✗'}")
-  print(f"DATABRICKS_TOKEN: {'✓' if os.getenv('DATABRICKS_TOKEN') else '✗'}")
-  print(f"DATABRICKS_CONFIG_PROFILE: {os.getenv('DATABRICKS_CONFIG_PROFILE', 'Not set')}")
+  print(f'DATABRICKS_HOST: {"✓" if os.getenv("DATABRICKS_HOST") else "✗"}')
+  print(f'DATABRICKS_TOKEN: {"✓" if os.getenv("DATABRICKS_TOKEN") else "✗"}')
+  print(f'DATABRICKS_CONFIG_PROFILE: {os.getenv("DATABRICKS_CONFIG_PROFILE", "Not set")}')
   print()
 
   try:

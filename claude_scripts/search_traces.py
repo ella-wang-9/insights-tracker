@@ -46,7 +46,7 @@ def search_experiment_traces():
       if hasattr(trace, 'data') and trace.data and hasattr(trace.data, 'spans'):
         print(f'Number of spans: {len(trace.data.spans)}')
         for j, span in enumerate(trace.data.spans[:3]):  # Show first 3 spans
-          print(f'  Span {j+1}: {span.name} ({span.span_type})')
+          print(f'  Span {j + 1}: {span.name} ({span.span_type})')
 
   except Exception as e:
     print(f'Error searching traces: {e}')

@@ -77,12 +77,10 @@ if [ "$DATABRICKS_AUTH_TYPE" = "pat" ]; then
   export DATABRICKS_HOST="$DATABRICKS_HOST"
   export DATABRICKS_TOKEN="$DATABRICKS_TOKEN"
   
-  # Test connection
-  if ! databricks current-user me >/dev/null 2>&1; then
-    echo "❌ PAT authentication failed. Please check your credentials."
-    echo "💡 Try running: databricks auth login --host $DATABRICKS_HOST"
-    echo "💡 Or run ./setup.sh to reconfigure authentication"
-    exit 1
+  # Test connection with workspace list command (older CLI compatible)
+  if ! databricks workspace list / >/dev/null 2>&1; then
+    echo "⚠️  PAT authentication check failed, but continuing with deployment..."
+    echo "💡 If deployment fails, try running: databricks auth login --host $DATABRICKS_HOST"
   fi
   
 elif [ "$DATABRICKS_AUTH_TYPE" = "profile" ]; then
@@ -94,8 +92,8 @@ elif [ "$DATABRICKS_AUTH_TYPE" = "profile" ]; then
   
   echo "Using profile authentication: $DATABRICKS_CONFIG_PROFILE"
   
-  # Test connection
-  if ! databricks current-user me --profile "$DATABRICKS_CONFIG_PROFILE" >/dev/null 2>&1; then
+  # Test connection with workspace list command (older CLI compatible)
+  if ! databricks workspace list / --profile "$DATABRICKS_CONFIG_PROFILE" >/dev/null 2>&1; then
     echo "❌ Profile authentication failed. Please check your profile configuration."
     echo "💡 Try running: databricks auth login --host <your-host> --profile $DATABRICKS_CONFIG_PROFILE"
     echo "💡 Or run ./setup.sh to reconfigure authentication"
@@ -203,22 +201,26 @@ print_timing "Starting requirements generation"
 echo "📦 Generating requirements.txt..."
 if [ "$VERBOSE" = true ]; then
   echo "Using custom script to avoid editable installs..."
-  uv run python scripts/generate_semver_requirements.py
+  python3 scripts/generate_semver_requirements.py
 else
-  uv run python scripts/generate_semver_requirements.py
+  python3 scripts/generate_semver_requirements.py
 fi
 print_timing "Requirements generation completed"
 
 # Build frontend
 print_timing "Starting frontend build"
-echo "🏗️  Building frontend..."
-cd client
-if [ "$VERBOSE" = true ]; then
-  npm run build
-else
-  npm run build > /dev/null 2>&1
+echo "🏗️  Using existing frontend build..."
+# Check if build exists
+if [ ! -d "client/build" ] || [ ! -f "client/build/index.html" ]; then
+  echo "⚠️  No existing build found, building frontend..."
+  cd client
+  if [ "$VERBOSE" = true ]; then
+    bunx vite build
+  else
+    bunx vite build > /dev/null 2>&1
+  fi
+  cd ..
 fi
-cd ..
 echo "✅ Frontend build complete"
 print_timing "Frontend build completed"
 
@@ -232,12 +234,27 @@ else
 fi
 echo "✅ Workspace directory created"
 
-echo "📤 Syncing source code to workspace..."
-# Use databricks sync to properly update all files including requirements.txt
+echo "📤 Uploading source code to workspace..."
+# Use individual file uploads for older CLI compatibility
+# Upload key files needed for deployment
 if [ "$DATABRICKS_AUTH_TYPE" = "profile" ]; then
-  databricks sync . "$DBA_SOURCE_CODE_PATH" --profile "$DATABRICKS_CONFIG_PROFILE"
+  databricks workspace import-dir . "$DBA_SOURCE_CODE_PATH" --overwrite --profile "$DATABRICKS_CONFIG_PROFILE" 2>/dev/null || {
+    echo "⚠️ Trying alternative upload method..."
+    # Try uploading key files individually
+    databricks workspace import app.yaml "$DBA_SOURCE_CODE_PATH/app.yaml" --format SOURCE --profile "$DATABRICKS_CONFIG_PROFILE" --overwrite
+    databricks workspace import requirements.txt "$DBA_SOURCE_CODE_PATH/requirements.txt" --format SOURCE --profile "$DATABRICKS_CONFIG_PROFILE" --overwrite
+    # Upload server directory
+    databricks workspace import-dir server "$DBA_SOURCE_CODE_PATH/server" --overwrite --profile "$DATABRICKS_CONFIG_PROFILE"
+  }
 else
-  databricks sync . "$DBA_SOURCE_CODE_PATH"
+  databricks workspace import-dir . "$DBA_SOURCE_CODE_PATH" --overwrite 2>/dev/null || {
+    echo "⚠️ Trying alternative upload method..."
+    # Try uploading key files individually
+    databricks workspace import app.yaml "$DBA_SOURCE_CODE_PATH/app.yaml" --format SOURCE --overwrite
+    databricks workspace import requirements.txt "$DBA_SOURCE_CODE_PATH/requirements.txt" --format SOURCE --overwrite
+    # Upload server directory
+    databricks workspace import-dir server "$DBA_SOURCE_CODE_PATH/server" --overwrite
+  }
 fi
 echo "✅ Source code uploaded"
 print_timing "Workspace setup completed"

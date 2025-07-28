@@ -1,9 +1,9 @@
-import { WelcomePage } from "./pages/WelcomePage";
+import InsightsExtractorApp from "./pages/InsightsExtractorApp";
 
 function App() {
   return (
     <div className="min-h-screen bg-background">
-      <WelcomePage />
+      <InsightsExtractorApp />
     </div>
   );
 }

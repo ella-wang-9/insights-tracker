@@ -1,0 +1,27 @@
+# Databricks ignore file - exclude these from deployment
+.venv/
+venv/
+.env
+.env.local
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+node_modules/
+.DS_Store
+.git/
+.gitignore
+*.log
+.pytest_cache/
+.coverage
+.tox/
+.mypy_cache/
+.uv/
+client/node_modules/
+.databricks/
+tmp/
+temp/
+*.pid
+*.seed
+*.pid.lock
