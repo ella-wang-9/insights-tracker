@@ -107,11 +107,16 @@ Text: {text}
 
 Return a JSON object with these fields:
 - customer_name: The company or customer name (e.g., "7-Eleven", "a16z", "ActiveFence")
-- meeting_date: The date in format "MMM DD, YYYY" (e.g., "Mar 11, 2025")
+- meeting_date: The date in format "MMM DD, YYYY" (e.g., "Nov 12, 2024", "Mar 11, 2025")
+
+IMPORTANT: Always format dates as "MMM DD, YYYY" where:
+- MMM is the 3-letter month abbreviation (Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec)
+- DD is the 2-digit day (01-31)
+- YYYY is the 4-digit year
 
 If a field is not found, use empty string "".
 
-Example: {{"customer_name": "7-Eleven", "meeting_date": "Mar 11, 2025"}}"""
+Example: {{"customer_name": "7-Eleven", "meeting_date": "Nov 12, 2024"}}"""
     
     print(f"Customer extraction prompt length: {len(prompt)} chars")
     response = await self._query_databricks_model(prompt, max_tokens=500)
@@ -172,6 +177,10 @@ Example: {{"customer_name": "7-Eleven", "meeting_date": "Mar 11, 2025"}}"""
       if date in ["", "null", "None", "N/A", "NA"]:
         date = None
       
+      # Format date consistently
+      if date:
+        date = self._format_date_consistently(date)
+      
       print(f"Successfully extracted - Customer: '{customer}', Date: '{date}'")
       return customer, date
     except Exception as e:
@@ -201,7 +210,34 @@ Example: {{"customer_name": "7-Eleven", "meeting_date": "Mar 11, 2025"}}"""
         date = None
         
       print(f"Extracted from regex parsing - Customer: '{customer}', Date: '{date}'")
+      # Format date consistently if found
+      if date:
+        date = self._format_date_consistently(date)
       return customer, date
+
+  def _format_date_consistently(self, date_str: str) -> str:
+    """Format date to consistent MMM DD, YYYY format."""
+    if not date_str or date_str.strip() == "":
+      return ""
+    
+    try:
+      from dateutil import parser as date_parser
+      
+      # Parse the date string
+      parsed_date = date_parser.parse(date_str, fuzzy=True)
+      
+      # Format as MMM DD, YYYY
+      formatted = parsed_date.strftime("%b %d, %Y")
+      print(f"Formatted date '{date_str}' -> '{formatted}'")
+      return formatted
+      
+    except Exception as e:
+      print(f"Could not parse date '{date_str}': {e}")
+      # If parsing fails, return the original if it looks like it's already in correct format
+      import re
+      if re.match(r'^[A-Z][a-z]{2} \d{1,2}, \d{4}$', date_str.strip()):
+        return date_str.strip()
+      return date_str
 
   async def _extract_customer_info_fallback(self, text: str) -> Tuple[Optional[str], Optional[str]]:
     """Fallback method for extracting customer info - kept for compatibility."""
@@ -245,7 +281,7 @@ Example: {{"customer_name": "7-Eleven", "meeting_date": "Mar 11, 2025"}}"""
         if match:
           date_str = match.group(1)
           # Parse and format the date consistently
-          formatted_date = self._parse_and_format_date(date_str)
+          formatted_date = self._format_date_consistently(date_str)
           if formatted_date:
             meeting_date = formatted_date
           else:
