@@ -101,30 +101,25 @@ class AIInsightsEngine:
 
   async def _extract_customer_info(self, text: str) -> Tuple[Optional[str], Optional[str]]:
     """Extract customer name and meeting date from text using LLM."""
-    prompt = f"""Extract the customer/company name and meeting date from this text. 
-    Return ONLY a JSON object with 'customer_name' and 'meeting_date' fields.
-    
-    Important:
-    - For customer_name: Extract the company or customer name mentioned in the text
-      - Look for company names, acronyms, or abbreviations (e.g., "7-Eleven", "a16z", "TechCorp", "Andreessen Horowitz")
-      - If a company is referred to by both full name and abbreviation, use the abbreviation if it's more commonly used
-      - Common patterns: "Meeting with X", "X reached out", "X is interested", "X Meeting Notes"
-    - For meeting_date: Extract the date in format "MMM DD, YYYY" (e.g., "Mar 11, 2025", "Jan 15, 2024")
-      - If no specific date is found, return empty string ""
-    - If no clear customer name is found, return empty string ""
-    
-    Text: {text}
-    
-    Example response: {{"customer_name": "ACME Corp", "meeting_date": "Jan 15, 2024"}}
-    """
+    prompt = f"""Extract the customer name and meeting date from this text.
+
+Text: {text}
+
+Return a JSON object with these fields:
+- customer_name: The company or customer name (e.g., "7-Eleven", "a16z", "ActiveFence")
+- meeting_date: The date in format "MMM DD, YYYY" (e.g., "Mar 11, 2025")
+
+If a field is not found, use empty string "".
+
+Example: {{"customer_name": "7-Eleven", "meeting_date": "Mar 11, 2025"}}"""
     
     print(f"Customer extraction prompt length: {len(prompt)} chars")
     response = await self._query_databricks_model(prompt, max_tokens=500)
     print(f"Customer extraction response: {response[:200] if response else 'None'}...")
     
     if not response:
-      print("WARNING: No response from LLM for customer extraction, using fallback")
-      return await self._extract_customer_info_fallback(text)
+      print("WARNING: No response from LLM for customer extraction")
+      return None, None
     
     try:
       import json
@@ -132,6 +127,11 @@ class AIInsightsEngine:
       # Handle markdown code blocks that Gemini often uses
       if '```json' in response:
         json_text = response.split('```json')[1].split('```')[0].strip()
+        print(f"Extracted JSON from markdown: {json_text}")
+      elif '```' in response:
+        # Sometimes just ``` without json
+        json_text = response.split('```')[1].split('```')[0].strip()
+        print(f"Extracted from code block: {json_text}")
       else:
         # More robust JSON extraction that handles nested objects and arrays
         # Find the first { and try to match to the last }
@@ -161,12 +161,47 @@ class AIInsightsEngine:
           json_text = response[start_idx:end_idx].strip()
       
       data = json.loads(json_text)
-      return data.get('customer_name'), data.get('meeting_date')
+      
+      # Get values and clean them
+      customer = data.get('customer_name', '').strip()
+      date = data.get('meeting_date', '').strip()
+      
+      # Clean up empty values
+      if customer in ["", "null", "None", "N/A", "NA"]:
+        customer = None
+      if date in ["", "null", "None", "N/A", "NA"]:
+        date = None
+      
+      print(f"Successfully extracted - Customer: '{customer}', Date: '{date}'")
+      return customer, date
     except Exception as e:
-      print(f"Error parsing LLM response: {e}")
-      print(f"Response was: {response[:200]}")
-      # Return None values if parsing fails
-      return None, None
+      print(f"ERROR parsing customer extraction JSON: {e}")
+      print(f"Response preview: {response[:500]}")
+      
+      # Try to extract from response text even if JSON parsing failed
+      import re
+      
+      # Look for customer_name in various formats
+      customer_match = re.search(r'customer_name["\']?\s*:\s*["\']([^"\']+)["\']', response, re.IGNORECASE)
+      if not customer_match:
+        customer_match = re.search(r'"customer_name"\s*:\s*"([^"]+)"', response)
+      
+      # Look for meeting_date in various formats  
+      date_match = re.search(r'meeting_date["\']?\s*:\s*["\']([^"\']+)["\']', response, re.IGNORECASE)
+      if not date_match:
+        date_match = re.search(r'"meeting_date"\s*:\s*"([^"]+)"', response)
+      
+      customer = customer_match.group(1).strip() if customer_match else None
+      date = date_match.group(1).strip() if date_match else None
+      
+      # Clean up empty values
+      if customer in ["", "null", "None", "N/A", "NA"]:
+        customer = None
+      if date in ["", "null", "None", "N/A", "NA"]:
+        date = None
+        
+      print(f"Extracted from regex parsing - Customer: '{customer}', Date: '{date}'")
+      return customer, date
 
   async def _extract_customer_info_fallback(self, text: str) -> Tuple[Optional[str], Optional[str]]:
     """Fallback method for extracting customer info - kept for compatibility."""
@@ -649,7 +684,10 @@ class AIInsightsEngine:
           # Extract the response content
           if response.choices and len(response.choices) > 0:
             content = response.choices[0].message.content
-            print(f'  Response preview: {content[:100]}...')
+            print(f'  Response length: {len(content)} chars')
+            print(f'  Response preview: {content[:200]}...')
+            if len(content) < 500:
+              print(f'  Full response: {content}')
             # Reset failure counter on success
             self.consecutive_failures = 0
             self.llm_available = True
