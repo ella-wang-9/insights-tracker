@@ -156,7 +156,7 @@ DEFAULT_VECTOR_SEARCH_SCHEMA = SchemaTemplate(
       name='Unstructured Tags',
       description='Unstructured data processing capabilities',
       value_type=CategoryValueType.PREDEFINED,
-      possible_values=['RAG', 'Automation', 'Document Processing', 'Text Analysis'],
+      possible_values=['RAG', 'Automation', 'Business Intelligence'],
     ),
     CategoryDefinition(
       name='End User Tags',
