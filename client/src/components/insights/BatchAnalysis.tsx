@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import React, { useState, useRef, useEffect } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 
 // TypeScript declaration for webkitdirectory attribute
 declare module 'react' {
@@ -38,7 +39,28 @@ const BatchAnalysis: React.FC<BatchAnalysisProps> = ({ selectedSchemaId }) => {
   const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx' | 'preview'>('preview');
   const [showResults, setShowResults] = useState(false);
   const [resultsData, setResultsData] = useState<any[]>([]);
+  const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+
+  // Query to fetch available columns for the selected schema
+  const { data: availableColumns } = useQuery({
+    queryKey: ['available-columns', selectedSchemaId],
+    queryFn: async () => {
+      if (!selectedSchemaId) return null;
+      const response = await fetch(`/api/batch/available-columns/${selectedSchemaId}`);
+      if (!response.ok) throw new Error('Failed to fetch columns');
+      return response.json();
+    },
+    enabled: !!selectedSchemaId,
+  });
+
+  // Update selected columns when schema changes or columns are loaded
+  useEffect(() => {
+    if (availableColumns?.all_columns) {
+      // Default to all columns selected
+      setSelectedColumns(availableColumns.all_columns);
+    }
+  }, [availableColumns]);
 
   // Batch analysis mutation for files with preview
   const batchFilesMutation = useMutation({
@@ -218,6 +240,7 @@ const BatchAnalysis: React.FC<BatchAnalysisProps> = ({ selectedSchemaId }) => {
     formData.append('urls', JSON.stringify(urlInputs.map(input => input.content)));
     formData.append('schema_template_id', selectedSchemaId);
     formData.append('export_format', exportFormat);
+    formData.append('selected_columns', JSON.stringify(selectedColumns));
 
     // Use the unified mutation
     batchAllMutation.mutate(formData);
@@ -467,6 +490,80 @@ const BatchAnalysis: React.FC<BatchAnalysisProps> = ({ selectedSchemaId }) => {
               </SelectContent>
             </Select>
           </div>
+
+          {/* Column Selection */}
+          {availableColumns && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium">Select Columns to Export:</label>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => setSelectedColumns(availableColumns.all_columns)}
+                  >
+                    Select All
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => setSelectedColumns([])}
+                  >
+                    Clear All
+                  </Button>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto border rounded p-3">
+                {availableColumns.base_columns.map((column: string) => (
+                  <div key={column} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`col-${column}`}
+                      checked={selectedColumns.includes(column)}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setSelectedColumns([...selectedColumns, column]);
+                        } else {
+                          setSelectedColumns(selectedColumns.filter(col => col !== column));
+                        }
+                      }}
+                    />
+                    <label
+                      htmlFor={`col-${column}`}
+                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                    >
+                      {column}
+                    </label>
+                  </div>
+                ))}
+                {availableColumns.category_columns.map((column: string) => (
+                  <div key={column} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`col-${column}`}
+                      checked={selectedColumns.includes(column)}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setSelectedColumns([...selectedColumns, column]);
+                        } else {
+                          setSelectedColumns(selectedColumns.filter(col => col !== column));
+                        }
+                      }}
+                    />
+                    <label
+                      htmlFor={`col-${column}`}
+                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 text-blue-600"
+                    >
+                      {column}
+                    </label>
+                  </div>
+                ))}
+              </div>
+              
+              <div className="text-xs text-muted-foreground">
+                {selectedColumns.length} of {availableColumns.all_columns.length} columns selected
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
