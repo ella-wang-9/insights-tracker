@@ -144,7 +144,7 @@ DEFAULT_VECTOR_SEARCH_SCHEMA = SchemaTemplate(
       name='Usage Pattern',
       description='How the customer uses or plans to use the product',
       value_type=CategoryValueType.PREDEFINED,
-      possible_values=['Batch', 'Real Time', 'Interactive', 'Scheduled'],
+      possible_values=['Batch', 'Real Time'],
     ),
     CategoryDefinition(
       name='Search Tags',
@@ -162,7 +162,7 @@ DEFAULT_VECTOR_SEARCH_SCHEMA = SchemaTemplate(
       name='End User Tags',
       description='Type of end users for the application',
       value_type=CategoryValueType.PREDEFINED,
-      possible_values=['Internal', 'External', 'Customer-Facing', 'Partner'],
+      possible_values=['Internal', 'External'],
     ),
     CategoryDefinition(
       name='Production Status',

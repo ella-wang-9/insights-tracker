@@ -686,8 +686,14 @@ Example: {{"customer_name": "7-Eleven", "meeting_date": "Nov 12, 2024"}}"""
     import hashlib
     cache_key = hashlib.md5(f"{prompt}_{max_tokens}".encode()).hexdigest()
     if cache_key in self._cache:
-      print("  Using cached response")
-      return self._cache[cache_key]
+      cached_response = self._cache[cache_key]
+      # Don't use cached empty responses
+      if cached_response and cached_response.strip():
+        print("  Using cached response")
+        return cached_response
+      else:
+        print("  Removing empty cached response")
+        del self._cache[cache_key]
 
     # Try each endpoint until one works
     for endpoint_idx, endpoint in enumerate(self.available_endpoints):
@@ -724,6 +730,12 @@ Example: {{"customer_name": "7-Eleven", "meeting_date": "Nov 12, 2024"}}"""
             print(f'  Response preview: {content[:200]}...')
             if len(content) < 500:
               print(f'  Full response: {content}')
+            
+            # If content is empty, try next endpoint instead of returning empty
+            if not content or not content.strip():
+              print(f'  Empty response from {endpoint}, trying next endpoint...')
+              break  # Try next endpoint
+            
             # Reset failure counter on success
             self.consecutive_failures = 0
             self.llm_available = True
@@ -781,40 +793,73 @@ Example: {{"customer_name": "7-Eleven", "meeting_date": "Nov 12, 2024"}}"""
   async def _process_predefined_category(self, text: str, category) -> CategoryResult:
     """Process a category with predefined values using document comprehension."""
     
-    # Ultra-short guidance for Vector Search schema categories
+    # Simple definitions for Vector Search schema categories
     if category.name == "Usage Pattern":
-      guidance = "How do they use it? Real Time=instant, Batch=scheduled, Interactive=queries, Scheduled=automated."
+      guidance = "Describes the data processing frequency for the customer's use case, such as 'Real Time' or 'Batch'."
 
     elif category.name == "Product":
-      guidance = "Which Databricks products are mentioned?"
+      guidance = "The specific Databricks product or feature that is the main topic of discussion in the meeting. This can include 'Vector Search,' 'Embedding FT' (Fine-Tuning), or 'Unstructured'."
 
     elif category.name == "Search Tags":  
-      guidance = "What search features? RAG=retrieval, Matching=similar, Search=find, Similarity=compare."
+      guidance = "The primary application of the search technology being discussed. This could be for 'RAG' (Retrieval-Augmented Generation), general 'Search,' or 'Matching' data records."
 
     elif category.name == "Unstructured Tags":
-      guidance = "What data processing? RAG=retrieval, Automation=workflows, Document Processing=parsing, Text Analysis=NLP."
+      guidance = "Highlights use cases involving the processing of unstructured data, often for 'RAG' or 'Automation' of tasks like document parsing."
 
     elif category.name == "End User Tags":
-      guidance = "Who uses it? Internal=employees, External=customers, Customer-Facing=public, Partner=third-party."
+      guidance = "Specifies whether the end-users of the application being built are 'Internal' to the customer's company or 'External' clients."
 
     elif category.name == "Production Status":
-      guidance = "What stage? Production=live, Development=building, POC=trial, Planning=future."
+      guidance = "Indicates whether the customer's application or the specific use case being discussed is live and operational in a production environment. Return 'Production' only if it's live in production, otherwise return empty array."
 
     else:
-      guidance = f"Select options for {category.name}."
+      guidance = f"Analyze the document and select appropriate options for {category.name} based on the content."
     
-    prompt = f"""Options: {', '.join(category.possible_values)}
+    # Special formatting for different categories
+    if category.name == "Usage Pattern":
+      prompt = f"""Extract {category.name} from the document.
 
-{guidance}
+Options: {', '.join(category.possible_values)}
+
+Definition: {guidance}
 
 Text: "{text}"
 
-JSON: {{"values": ["option"], "evidence": ["text"], "confidence": 0.9}}"""
+Return JSON: {{"values": ["option"], "evidence": ["quote"]}}"""
+    else:
+      prompt = f"""Extract {category.name} from the document.
+
+Options: {', '.join(category.possible_values)}
+
+Definition: {guidance}
+
+Text: "{text}"
+
+Return JSON: {{"values": ["option"], "evidence": ["quote"], "confidence": 0.9}}"""
 
     # Try Databricks Foundation Model first
     print(f"\n=== PREDEFINED CATEGORY EXTRACTION: {category.name} ===")
     print(f"Sending prompt to LLM (length: {len(prompt)} chars)")
-    response_text = await self._query_databricks_model(prompt, max_tokens=1000)
+    
+    # For problematic categories, try a different model first
+    if category.name in ["Search Tags", "Unstructured Tags"]:
+      print(f"⚠️  {category.name} is problematic, trying different model order...")
+      # Temporarily reorder endpoints to try Claude or Gemini Pro first
+      original_endpoints = self.available_endpoints.copy()
+      # Move claude or gemini-pro to front if available
+      for priority_model in ['databricks-claude-3-7-sonnet', 'databricks-gemini-2-5-pro']:
+        if priority_model in self.available_endpoints:
+          self.available_endpoints.remove(priority_model)
+          self.available_endpoints.insert(0, priority_model)
+          print(f"Prioritizing {priority_model} for {category.name}")
+          break
+      
+      response_text = await self._query_databricks_model(prompt, max_tokens=1000)
+      
+      # Restore original order
+      self.available_endpoints = original_endpoints
+    else:
+      response_text = await self._query_databricks_model(prompt, max_tokens=1000)
 
     if response_text:
       try:
@@ -934,7 +979,7 @@ JSON: {{"values": ["option"], "evidence": ["text"], "confidence": 0.9}}"""
 
 Text: "{text}"
 
-Return JSON only: {{"values": ["industry"], "evidence": ["text"], "confidence": 0.9}}"""
+Return JSON only: {{"values": ["industry"], "evidence": ["text"]}}"""
     else:
       prompt = f"""{guidance}
 
