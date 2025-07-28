@@ -1,5 +1,6 @@
 """AI engine for customer insights extraction."""
 
+import asyncio
 import json
 import os
 import re
@@ -20,15 +21,21 @@ class AIInsightsEngine:
 
   def __init__(self):
     """Initialize the AI engine."""
+    # Simple cache to avoid repeated calls
+    self._cache = {}
+    self._cache_max_size = 50
+    
     # Initialize Databricks client
     try:
       self.databricks_client = WorkspaceClient()
       # Use available foundation model endpoints
       # Note: These endpoints have rate limits and may have availability issues
       self.available_endpoints = [
-        'llama_3_1_70b',  # This was listed as READY
-        'meta_llama_3_70b_instruct-chat',  # Also listed as READY
-        'databricks-meta-llama-3-1-8b-instruct',  # Fallback option
+        'databricks-gemini-2-5-flash',  # Fast Gemini model that works
+        'databricks-gemini-2-5-pro',  # Pro Gemini model
+        'databricks-claude-3-7-sonnet',  # Claude Sonnet as backup
+        'databricks-meta-llama-3-1-8b-instruct',  # 8B Llama (rate limited)
+        'databricks-meta-llama-3-3-70b-instruct',  # 70B Llama
       ]
       self.model_endpoint = self.available_endpoints[0]
       self.llm_available = True  # Always try to use LLM
@@ -65,13 +72,20 @@ class AIInsightsEngine:
     customer_name = None
     meeting_date = None
     if extract_customer_info:
+      print(f"Extracting customer info from text (first 200 chars): {text[:200]}...")
       # Use LLM for customer info extraction
       customer_name, meeting_date = await self._extract_customer_info(text)
+      print(f"Extracted customer_name: {customer_name}, meeting_date: {meeting_date}")
 
     # Process each category in the schema
     categories = {}
     for category in schema.categories:
+      print(f"\nProcessing category: {category.name} (type: {category.value_type})")
+      print(f"Category description: {category.description}")
+      if category.value_type == CategoryValueType.PREDEFINED and hasattr(category, 'possible_values'):
+        print(f"Predefined values: {category.possible_values}")
       category_result = await self._process_category(text, category, fast_mode)
+      print(f"Result for {category.name}: values={category_result.values}, confidence={category_result.confidence}")
       categories[category.name] = category_result
 
     # Calculate processing time
@@ -90,27 +104,64 @@ class AIInsightsEngine:
     prompt = f"""Extract the customer/company name and meeting date from this text. 
     Return ONLY a JSON object with 'customer_name' and 'meeting_date' fields.
     
-    Text: {text[:500]}
+    Important:
+    - For customer_name: Extract the company or customer name mentioned in the text
+      - Look for company names, acronyms, or abbreviations (e.g., "7-Eleven", "a16z", "TechCorp", "Andreessen Horowitz")
+      - If a company is referred to by both full name and abbreviation, use the abbreviation if it's more commonly used
+      - Common patterns: "Meeting with X", "X reached out", "X is interested", "X Meeting Notes"
+    - For meeting_date: Extract the date in format "MMM DD, YYYY" (e.g., "Mar 11, 2025", "Jan 15, 2024")
+      - If no specific date is found, return empty string ""
+    - If no clear customer name is found, return empty string ""
     
-    Example response: {{"customer_name": "ACME Corp", "meeting_date": "2024-09-15"}}
+    Text: {text}
+    
+    Example response: {{"customer_name": "ACME Corp", "meeting_date": "Jan 15, 2024"}}
     """
     
-    response = await self._query_databricks_model(prompt, max_tokens=200)
+    print(f"Customer extraction prompt length: {len(prompt)} chars")
+    response = await self._query_databricks_model(prompt, max_tokens=500)
+    print(f"Customer extraction response: {response[:200] if response else 'None'}...")
     
     if not response:
-      # Return None values if LLM fails
-      return None, None
+      print("WARNING: No response from LLM for customer extraction, using fallback")
+      return await self._extract_customer_info_fallback(text)
     
     try:
       import json
       # Extract JSON from response (LLM might include extra text)
-      json_match = re.search(r'\{[^{}]*\}', response)
-      if json_match:
-        json_text = json_match.group()
-        data = json.loads(json_text)
-        return data.get('customer_name'), data.get('meeting_date')
+      # Handle markdown code blocks that Gemini often uses
+      if '```json' in response:
+        json_text = response.split('```json')[1].split('```')[0].strip()
       else:
-        raise ValueError("No JSON found in response")
+        # More robust JSON extraction that handles nested objects and arrays
+        # Find the first { and try to match to the last }
+        start_idx = response.find('{')
+        if start_idx == -1:
+          raise ValueError("No JSON found in response")
+        
+        # Try to extract complete JSON by balancing braces
+        brace_count = 0
+        end_idx = start_idx
+        for i in range(start_idx, len(response)):
+          if response[i] == '{':
+            brace_count += 1
+          elif response[i] == '}':
+            brace_count -= 1
+            if brace_count == 0:
+              end_idx = i + 1
+              break
+        
+        if brace_count != 0:
+          # JSON might be truncated, try to extract what we can
+          json_text = response[start_idx:].strip()
+          # Try to fix common truncation issues
+          if json_text.count('{') > json_text.count('}'):
+            json_text += '}' * (json_text.count('{') - json_text.count('}'))
+        else:
+          json_text = response[start_idx:end_idx].strip()
+      
+      data = json.loads(json_text)
+      return data.get('customer_name'), data.get('meeting_date')
     except Exception as e:
       print(f"Error parsing LLM response: {e}")
       print(f"Response was: {response[:200]}")
@@ -520,76 +571,133 @@ class AIInsightsEngine:
   async def _process_category(self, text: str, category, fast_mode: bool = False) -> CategoryResult:
     """Process a single category using AI only."""
     # Always use LLM, no fallback
-    if category.value_type == CategoryValueType.PREDEFINED:
-      return await self._process_predefined_category(text, category)
-    else:
-      return await self._process_inferred_category(text, category)
+    result = None
+    
+    # Try extraction, with one retry if we get empty result
+    for attempt in range(2):
+      if attempt > 0:
+        print(f"\nRetrying extraction for {category.name} (attempt {attempt + 1}/2)")
+        
+      if category.value_type == CategoryValueType.PREDEFINED:
+        result = await self._process_predefined_category(text, category)
+      else:
+        result = await self._process_inferred_category(text, category)
+      
+      # If we got values, we're done
+      if result and result.values and len(result.values) > 0:
+        break
+      
+      # Otherwise, we'll retry once
+      if attempt == 0:
+        print(f"Got empty result for {category.name}, will retry once")
+        await asyncio.sleep(1)  # Brief pause before retry
+    
+    return result
 
   async def _query_databricks_model(self, prompt: str, max_tokens: int = 500) -> Optional[str]:
     """Query the Databricks Foundation Model endpoint."""
+    # TEMPORARY: Use mock responses for testing while LLMs are rate limited
+    if os.getenv('USE_MOCK_LLM', 'false').lower() == 'true':
+      print("  Using mock LLM response for testing")
+      if "customer" in prompt.lower():
+        return '{"customer_name": "ACME Corp", "meeting_date": "2025-01-15"}'
+      elif "predefined" in prompt.lower():
+        return '{"values": ["Vector Search"], "evidence": ["needs Vector Search"], "confidence": 0.9}'
+      else:
+        return '{"values": ["product catalog search"], "evidence": ["for their product catalog"], "confidence": 0.8}'
+    
     if not self.databricks_client or not self.available_endpoints:
       print('Databricks client or endpoints not available')
       return None
+    
+    # Check cache first - make cache key more specific
+    # Include more context to prevent cache collisions
+    import hashlib
+    cache_key = hashlib.md5(f"{prompt}_{max_tokens}".encode()).hexdigest()
+    if cache_key in self._cache:
+      print("  Using cached response")
+      return self._cache[cache_key]
 
     # Try each endpoint until one works
     for endpoint_idx, endpoint in enumerate(self.available_endpoints):
       print(f'\nTrying LLM endpoint {endpoint_idx + 1}/{len(self.available_endpoints)}: {endpoint}')
       
-      try:
-        # Create ChatMessage for the user prompt
-        messages = [ChatMessage(role=ChatMessageRole.USER, content=prompt)]
+      # Retry logic for rate limits
+      for retry in range(3):
+        try:
+          # Create ChatMessage for the user prompt
+          messages = [ChatMessage(role=ChatMessageRole.USER, content=prompt)]
 
-        # Query with a reasonable timeout
-        print(f'  Sending request...')
-        
-        # Make the synchronous call in a thread to avoid blocking
-        import asyncio
-        response = await asyncio.wait_for(
-          asyncio.to_thread(
-            self.databricks_client.serving_endpoints.query,
-            name=endpoint, 
-            messages=messages, 
-            max_tokens=max_tokens, 
-            temperature=0.1
-          ),
-          timeout=60.0  # 60 second timeout to give LLM more time
-        )
+          # Query with a reasonable timeout
+          print(f'  Attempt {retry + 1}/3: Sending request...')
+          
+          # Make the synchronous call in a thread to avoid blocking
+          import asyncio
+          response = await asyncio.wait_for(
+            asyncio.to_thread(
+              self.databricks_client.serving_endpoints.query,
+              name=endpoint, 
+              messages=messages, 
+              max_tokens=max_tokens, 
+              temperature=0.1
+            ),
+            timeout=120.0  # 120 second timeout to give LLM more time
+          )
 
-        print(f'  ✓ Success with {endpoint}!')
+          print(f'  ✓ Success with {endpoint}!')
 
-        # Extract the response content
-        if response.choices and len(response.choices) > 0:
-          content = response.choices[0].message.content
-          print(f'  Response preview: {content[:100]}...')
-          # Reset failure counter on success
-          self.consecutive_failures = 0
-          self.llm_available = True
-          # Update primary endpoint for future calls
-          if endpoint_idx > 0:
-            self.available_endpoints[0], self.available_endpoints[endpoint_idx] = (
-              self.available_endpoints[endpoint_idx], self.available_endpoints[0]
-            )
-          return content
-        else:
-          print('  No choices found in response')
-          continue
+          # Extract the response content
+          if response.choices and len(response.choices) > 0:
+            content = response.choices[0].message.content
+            print(f'  Response preview: {content[:100]}...')
+            # Reset failure counter on success
+            self.consecutive_failures = 0
+            self.llm_available = True
+            # Update primary endpoint for future calls
+            if endpoint_idx > 0:
+              self.available_endpoints[0], self.available_endpoints[endpoint_idx] = (
+                self.available_endpoints[endpoint_idx], self.available_endpoints[0]
+              )
+            
+            # Cache the response
+            self._cache[cache_key] = content
+            if len(self._cache) > self._cache_max_size:
+              # Remove oldest entry
+              self._cache.pop(next(iter(self._cache)))
+            
+            return content
+          else:
+            print('  No choices found in response')
+            break  # Don't retry for empty responses
 
-      except asyncio.TimeoutError:
-        print(f'  Timeout after 30 seconds')
-        self.consecutive_failures += 1
-        continue
-      except Exception as e:
-        error_str = str(e)[:200]
-        print(f'  Error: {error_str}')
-        self.consecutive_failures += 1
-        
-        # If it's an upstream error or endpoint not found, try next
-        if 'upstream' in error_str.lower() or 'not found' in error_str.lower():
-          continue
-        # For other errors, also try next endpoint
-        continue
+        except asyncio.TimeoutError:
+          print(f'  Timeout after 120 seconds')
+          self.consecutive_failures += 1
+          break  # Don't retry timeouts, try next endpoint
+        except Exception as e:
+          error_str = str(e)[:200]
+          print(f'  Error: {error_str}')
+          
+          # Check for rate limit error
+          if 'REQUEST_LIMIT_EXCEEDED' in error_str or 'rate limit' in error_str.lower():
+            if retry < 2:
+              wait_time = (retry + 1) * 10  # 10s, 20s
+              print(f'  Rate limited. Waiting {wait_time} seconds before retry...')
+              await asyncio.sleep(wait_time)
+              continue
+            else:
+              print('  Rate limited after 3 attempts. Trying next endpoint.')
+              break
+          
+          # If it's an upstream error or endpoint not found, try next
+          if 'upstream' in error_str.lower() or 'not found' in error_str.lower():
+            break
+          
+          # For other errors, don't retry
+          self.consecutive_failures += 1
+          break
     
-    print('\nAll LLM endpoints failed. Using fallback.')
+    print('\nAll LLM endpoints failed.')
     # Mark LLM as unavailable after multiple failures
     if self.consecutive_failures >= self.max_consecutive_failures:
       self.llm_available = False
@@ -598,72 +706,140 @@ class AIInsightsEngine:
 
   async def _process_predefined_category(self, text: str, category) -> CategoryResult:
     """Process a category with predefined values."""
-    prompt = f"""You are an AI assistant specialized in extracting customer insights from business meeting notes. Your task is to analyze customer conversations and identify relevant information based on predefined categories.
+    # Build specific examples based on category patterns
+    examples = ""
+    category_lower = category.name.lower()
+    
+    # Generate examples based on the predefined values
+    if category.possible_values and len(category.possible_values) > 0:
+      # Take first few values as examples
+      example_values = category.possible_values[:3]
+      examples = f"""
+EXAMPLES based on the predefined options:
+{chr(10).join(f'- If text mentions something related to "{val}", select "{val}"' for val in example_values)}
+"""
+    
+    # Add pattern-specific guidance
+    if 'pattern' in category_lower or 'usage' in category_lower or 'type' in category_lower:
+      examples += """
+IMPORTANT: Look for keywords that indicate patterns or modes:
+- "real-time", "live", "immediate" → Select "Real-Time" if available
+- "batch", "bulk", "scheduled" → Select "Batch" if available
+- "interactive", "on-demand" → Select "Interactive" if available
+"""
+    elif 'product' in category_lower or 'service' in category_lower:
+      examples += """
+IMPORTANT: Match the exact product names mentioned in the text with the available options.
+"""
+    
+    prompt = f"""Analyze the text and select ONLY from the predefined options for the category "{category.name}".
 
-CONTEXT: This is a Customer Insights Extraction system designed to help sales and product teams understand customer needs, preferences, and requirements from meeting notes.
+CATEGORY: {category.name}
+DESCRIPTION: {category.description or 'No description provided'}
 
-ANALYSIS TASK:
-Category: {category.name}
-Description: {category.description or 'No description provided'}
-Available Options: {', '.join(category.possible_values)}
+YOU MUST ONLY CHOOSE FROM THESE OPTIONS:
+{chr(10).join(f'  • {option}' for option in category.possible_values)}
 
-CUSTOMER MEETING NOTES:
+{examples}
+
+TEXT TO ANALYZE:
 "{text}"
 
-ANALYSIS INSTRUCTIONS:
-1. Carefully read the customer meeting notes above
-2. Identify which of the available options are explicitly mentioned or clearly implied
-3. Look for direct mentions, synonyms, or contextual references
-4. Consider the business context - these are customer meetings about products/services
-5. Only include values that have clear evidence in the text
-6. Include multiple values if multiple are mentioned
-7. Return empty list if no clear matches are found
+RULES:
+1. ONLY return values from the predefined options list above
+2. Do NOT return any value that is not in the options list
+3. If text mentions "real-time", return "Real-Time" (not "Vector Search")
+4. If no options match, return empty list
+5. Always return at least one value if any of the options are mentioned
+6. Look for ALL mentions throughout the entire document
 
-RESPONSE FORMAT:
-Respond with ONLY a JSON object in this exact format:
-{{"values": ["option1", "option2"], "evidence": ["supporting text 1", "supporting text 2"], "confidence": 0.85}}
-
-Where:
-- values: list of matching options from the available options list
-- evidence: specific text snippets that support each identified value
-- confidence: score from 0.0 to 1.0 indicating your confidence level
-
-Do not include any explanatory text, just the JSON object."""
+Return ONLY JSON: {{"values": ["selected_option"], "evidence": ["text that supports this"], "confidence": 0.9}}"""
 
     # Try Databricks Foundation Model first
-    response_text = await self._query_databricks_model(prompt, max_tokens=500)
+    print(f"\n=== PREDEFINED CATEGORY EXTRACTION: {category.name} ===")
+    print(f"Sending prompt to LLM (length: {len(prompt)} chars)")
+    response_text = await self._query_databricks_model(prompt, max_tokens=1000)
 
     if response_text:
       try:
         print(f'Raw Foundation Model response: {response_text[:500]}...')
+        
+        # Check if response is empty or just whitespace
+        if not response_text.strip():
+          print("ERROR: LLM returned empty response")
+          raise ValueError("Empty response from LLM")
 
         # Extract JSON from response (in case there's extra text)
-        # Try to find JSON object - look for curly braces
-        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
-        if not json_match:
-          # Fallback: try to extract just the basic structure
-          json_match = re.search(r'\{.*?"values".*?\}', response_text, re.DOTALL)
-
-        if json_match:
-          json_text = json_match.group()
+        json_text = ''
+        if '```json' in response_text:
+          json_text = response_text.split('```json')[1].split('```')[0].strip()
           print(f'Extracted JSON: {json_text}')
-
-          # Clean up the JSON text - remove any newlines inside strings
-          json_text = re.sub(r'\n\s*', ' ', json_text)
-          result_data = json.loads(json_text)
-
-          print(f'Parsed JSON data successfully: {result_data}')
-
-          return CategoryResult(
-            category_name=category.name,
-            values=result_data.get('values', []),
-            confidence=result_data.get('confidence', 0.5),
-            evidence_text=result_data.get('evidence', []),
-            model_used=self.model_endpoint,
-          )
         else:
-          print(f'No JSON pattern found in response: {response_text}')
-          raise ValueError('No valid JSON found in response')
+          # More robust JSON extraction that handles nested objects and arrays
+          start_idx = response_text.find('{')
+          if start_idx == -1:
+            print(f'No JSON pattern found in response: {response_text[:200]}')
+            raise ValueError('No valid JSON found in response')
+          
+          # Try to extract complete JSON by balancing braces
+          brace_count = 0
+          end_idx = start_idx
+          for i in range(start_idx, len(response_text)):
+            if response_text[i] == '{':
+              brace_count += 1
+            elif response_text[i] == '}':
+              brace_count -= 1
+              if brace_count == 0:
+                end_idx = i + 1
+                break
+          
+          if brace_count != 0:
+            # JSON might be truncated, try to extract what we can
+            json_text = response_text[start_idx:].strip()
+            # Fix unterminated strings
+            lines = json_text.split('\n')
+            for i in range(len(lines)):
+              line = lines[i].strip()
+              # Count quotes in the line
+              quote_count = line.count('"')
+              if quote_count % 2 == 1:  # Odd number of quotes means unterminated string
+                if line.endswith(','):
+                  lines[i] = line[:-1] + '"'  # Close the string before comma
+                else:
+                  lines[i] = line + '"'  # Just close the string
+            json_text = '\n'.join(lines)
+            
+            # Remove trailing comma if present
+            json_text = json_text.rstrip().rstrip(',')
+            # Try to fix common truncation issues
+            if json_text.count('[') > json_text.count(']'):
+              json_text += ']' * (json_text.count('[') - json_text.count(']'))
+            if json_text.count('{') > json_text.count('}'):
+              json_text += '}' * (json_text.count('{') - json_text.count('}'))
+            print(f'Extracted JSON (with truncation fix): {json_text}')
+          else:
+            json_text = response_text[start_idx:end_idx].strip()
+            print(f'Extracted JSON: {json_text}')
+        
+        result_data = json.loads(json_text)
+
+        print(f'Parsed JSON data successfully: {result_data}')
+
+        # Validate extracted values
+        extracted_values = result_data.get('values', [])
+        if not extracted_values or (len(extracted_values) == 1 and not extracted_values[0]):
+          print(f"WARNING: No valid values extracted for {category.name}")
+          extracted_values = []
+        
+        print(f"Successfully extracted {len(extracted_values)} values for {category.name}: {extracted_values}")
+        
+        return CategoryResult(
+          category_name=category.name,
+          values=extracted_values,
+          confidence=result_data.get('confidence', 0.5),
+          evidence_text=result_data.get('evidence', []),
+          model_used=self.model_endpoint,
+        )
       except json.JSONDecodeError as e:
         print(f'JSON parsing error: {e}')
         print(f'Attempted to parse: {json_text if "json_text" in locals() else "N/A"}')
@@ -672,81 +848,166 @@ Do not include any explanatory text, just the JSON object."""
         print(f'Response was: {response_text[:200]}...')
 
     # No fallback - return empty result if LLM fails
+    print(f"\n!!! WARNING: Failed to extract {category.name} - returning empty result")
+    print(f"Category type: {category.value_type}")
+    if hasattr(category, 'possible_values'):
+      print(f"Possible values: {category.possible_values}")
     return CategoryResult(
       category_name=category.name,
       values=[],
       confidence=0.0,
       evidence_text=[],
       model_used="none",
-      error="LLM failed to process this category"
+      error="LLM extraction failed - no response or parsing error"
     )
 
   async def _process_inferred_category(self, text: str, category) -> CategoryResult:
     """Process a category where values should be inferred by AI."""
-    prompt = f"""You are an AI assistant specialized in extracting customer insights from business meeting notes. Your task is to analyze customer conversations and intelligently infer relevant information for open-ended categories.
+    # Provide category-specific guidance based on common patterns
+    guidance = ""
+    category_lower = category.name.lower()
+    
+    # Check for common category types and provide appropriate guidance
+    if 'industry' in category_lower or 'sector' in category_lower or 'vertical' in category_lower:
+      guidance = """
+This category is asking about the business sector or industry vertical.
+Examples: "Retail", "Healthcare", "Finance", "E-commerce", "Technology", "Manufacturing", "Media", "Education"
+DO NOT return product names. Return the customer's industry or business sector."""
+    elif 'use case' in category_lower or 'application' in category_lower or 'scenario' in category_lower:
+      guidance = """
+This category is asking about what the customer wants to achieve or how they plan to use the solution.
+Examples: "Store Locator", "Product Recommendations", "Fraud Detection", "Customer Service", "Inventory Management"
+DO NOT return product names. Return the specific use case or application."""
+    elif 'company' in category_lower or 'customer' in category_lower or 'client' in category_lower:
+      guidance = """
+This category is asking about the company or customer name.
+Extract the specific company, organization, or customer name mentioned in the text."""
+    elif 'date' in category_lower or 'time' in category_lower or 'when' in category_lower:
+      guidance = """
+This category is asking about dates or timeframes.
+Extract specific dates, timeframes, or time-related information. Format dates as "MMM DD, YYYY" when possible."""
+    elif 'product' in category_lower or 'service' in category_lower or 'solution' in category_lower:
+      guidance = """
+This category is asking about products or services mentioned.
+Extract specific product names, service names, or solutions discussed."""
+    elif 'pattern' in category_lower or 'usage' in category_lower or 'type' in category_lower:
+      guidance = """
+This category is asking about patterns, types, or modes of usage.
+Extract how something is used, patterns of behavior, or types of implementation."""
+    else:
+      # Generic guidance based on the category description
+      guidance = f"""
+Based on the category name "{category.name}" and description, extract relevant information.
+Look for specific mentions, facts, or details related to this category.
+Be precise and extract only what is explicitly mentioned or clearly implied."""
+    
+    prompt = f"""Extract values for the category "{category.name}" from the text.
 
-CONTEXT: This is a Customer Insights Extraction system designed to help sales and product teams understand customer needs, preferences, and requirements from meeting notes.
+CATEGORY: {category.name}
+DESCRIPTION: {category.description or 'Infer appropriate values from the text'}
 
-ANALYSIS TASK:
-Category: {category.name}
-Description: {category.description or 'No description provided'}
-Type: Open-ended (AI should infer appropriate values)
+{guidance}
 
-CUSTOMER MEETING NOTES:
+TEXT TO ANALYZE:
 "{text}"
 
-ANALYSIS INSTRUCTIONS:
-1. Carefully read the customer meeting notes above
-2. Based on the category name and description, identify relevant information
-3. Infer appropriate values that fit this category from the business context
-4. Provide specific, concise values (1-4 words each)
-5. Focus on business-relevant terms (products, industries, use cases, etc.)
-6. Include multiple values if multiple aspects are mentioned or implied
-7. Only include values that are clearly supported by the text content
-8. Consider industry terminology, company context, and business needs
+INSTRUCTIONS:
+1. For "{category.name}", extract ALL relevant values from the text
+2. Be specific and concise (1-4 words per value)
+3. Focus on what the text actually says about {category.name}
+4. If no relevant information is found, return empty values
+5. Provide evidence from the text to support your extraction
+6. Look through the ENTIRE document, not just the beginning
+7. Be thorough - extract ALL mentions, not just the first one
 
-RESPONSE FORMAT:
-Respond with ONLY a JSON object in this exact format:
-{{"values": ["value1", "value2"], "evidence": ["supporting text 1", "supporting text 2"], "confidence": 0.85}}
-
-Where:
-- values: list of inferred values that fit this category
-- evidence: specific text snippets that support each identified value
-- confidence: score from 0.0 to 1.0 indicating your confidence level
-
-Do not include any explanatory text, just the JSON object."""
+Return ONLY JSON: {{"values": ["relevant_value"], "evidence": ["supporting text"], "confidence": 0.9}}"""
 
     # Try Databricks Foundation Model first
-    response_text = await self._query_databricks_model(prompt, max_tokens=500)
+    print(f"\n=== INFERRED CATEGORY EXTRACTION: {category.name} ===")
+    print(f"Prompt for {category.name} (first 500 chars):\n{prompt[:500]}...")
+    print(f"Full prompt length: {len(prompt)} chars")
+    response_text = await self._query_databricks_model(prompt, max_tokens=1000)
 
     if response_text:
       try:
         print(f'Raw Foundation Model response (inferred): {response_text[:500]}...')
+        
+        # Check if response is empty or just whitespace
+        if not response_text.strip():
+          print("ERROR: LLM returned empty response")
+          raise ValueError("Empty response from LLM")
 
         # Extract JSON from response (in case there's extra text)
-        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
-        if not json_match:
-          json_match = re.search(r'\{.*?"values".*?\}', response_text, re.DOTALL)
-
-        if json_match:
-          json_text = json_match.group()
+        json_text = ''
+        if '```json' in response_text:
+          json_text = response_text.split('```json')[1].split('```')[0].strip()
           print(f'Extracted JSON (inferred): {json_text}')
-
-          # Clean up the JSON text
-          json_text = re.sub(r'\n\s*', ' ', json_text)
-          result_data = json.loads(json_text)
-
-          print(f'Parsed JSON data successfully (inferred): {result_data}')
-
-          return CategoryResult(
-            category_name=category.name,
-            values=result_data.get('values', []),
-            confidence=result_data.get('confidence', 0.5),
-            evidence_text=result_data.get('evidence', []),
-            model_used=self.model_endpoint,
-          )
         else:
-          raise ValueError('No valid JSON found in response')
+          # More robust JSON extraction that handles nested objects and arrays
+          start_idx = response_text.find('{')
+          if start_idx == -1:
+            print(f'No JSON pattern found in response (inferred): {response_text[:200]}')
+            raise ValueError('No valid JSON found in response')
+          
+          # Try to extract complete JSON by balancing braces
+          brace_count = 0
+          end_idx = start_idx
+          for i in range(start_idx, len(response_text)):
+            if response_text[i] == '{':
+              brace_count += 1
+            elif response_text[i] == '}':
+              brace_count -= 1
+              if brace_count == 0:
+                end_idx = i + 1
+                break
+          
+          if brace_count != 0:
+            # JSON might be truncated, try to extract what we can
+            json_text = response_text[start_idx:].strip()
+            # Fix unterminated strings
+            lines = json_text.split('\n')
+            for i in range(len(lines)):
+              line = lines[i].strip()
+              # Count quotes in the line
+              quote_count = line.count('"')
+              if quote_count % 2 == 1:  # Odd number of quotes means unterminated string
+                if line.endswith(','):
+                  lines[i] = line[:-1] + '"'  # Close the string before comma
+                else:
+                  lines[i] = line + '"'  # Just close the string
+            json_text = '\n'.join(lines)
+            
+            # Remove trailing comma if present
+            json_text = json_text.rstrip().rstrip(',')
+            # Try to fix common truncation issues
+            if json_text.count('[') > json_text.count(']'):
+              json_text += ']' * (json_text.count('[') - json_text.count(']'))
+            if json_text.count('{') > json_text.count('}'):
+              json_text += '}' * (json_text.count('{') - json_text.count('}'))
+            print(f'Extracted JSON (inferred, with truncation fix): {json_text}')
+          else:
+            json_text = response_text[start_idx:end_idx].strip()
+            print(f'Extracted JSON (inferred): {json_text}')
+        
+        result_data = json.loads(json_text)
+
+        print(f'Parsed JSON data successfully (inferred): {result_data}')
+
+        # Validate extracted values
+        extracted_values = result_data.get('values', [])
+        if not extracted_values or (len(extracted_values) == 1 and not extracted_values[0]):
+          print(f"WARNING: No valid values extracted for {category.name}")
+          extracted_values = []
+        
+        print(f"Successfully extracted {len(extracted_values)} values for {category.name}: {extracted_values}")
+        
+        return CategoryResult(
+          category_name=category.name,
+          values=extracted_values,
+          confidence=result_data.get('confidence', 0.5),
+          evidence_text=result_data.get('evidence', []),
+          model_used=self.model_endpoint,
+        )
       except json.JSONDecodeError as e:
         print(f'JSON parsing error (inferred): {e}')
         print(f'Attempted to parse: {json_text if "json_text" in locals() else "N/A"}')
@@ -755,13 +1016,17 @@ Do not include any explanatory text, just the JSON object."""
         print(f'Response was: {response_text[:200]}...')
 
     # No fallback - return empty result if LLM fails
+    print(f"\n!!! WARNING: Failed to extract {category.name} - returning empty result")
+    print(f"Category type: {category.value_type}")
+    if hasattr(category, 'possible_values'):
+      print(f"Possible values: {category.possible_values}")
     return CategoryResult(
       category_name=category.name,
       values=[],
       confidence=0.0,
       evidence_text=[],
       model_used="none",
-      error="LLM failed to process this category"
+      error="LLM extraction failed - no response or parsing error"
     )
 
   def extract_entities(self, text: str) -> List[ExtractedEntity]:
