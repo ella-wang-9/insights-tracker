@@ -781,27 +781,27 @@ Example: {{"customer_name": "7-Eleven", "meeting_date": "Nov 12, 2024"}}"""
   async def _process_predefined_category(self, text: str, category) -> CategoryResult:
     """Process a category with predefined values using document comprehension."""
     
-    # Concise guidance for Vector Search schema categories
+    # Ultra-short guidance for Vector Search schema categories
     if category.name == "Usage Pattern":
-      guidance = "Select how they use the solution: Real Time (instant/live), Batch (scheduled/bulk), Interactive (on-demand queries), Scheduled (recurring/automated)."
+      guidance = "How do they use it? Real Time=instant, Batch=scheduled, Interactive=queries, Scheduled=automated."
 
     elif category.name == "Product":
-      guidance = "Identify mentioned Databricks products: Vector Search, Embedding FT, Unstructured, MLflow, Delta Lake, Unity Catalog."
+      guidance = "Which Databricks products are mentioned?"
 
     elif category.name == "Search Tags":  
-      guidance = "Select search capabilities: RAG (retrieval/contextual), Matching (similarity), Search (text/document), Similarity (semantic/vector)."
+      guidance = "What search features? RAG=retrieval, Matching=similar, Search=find, Similarity=compare."
 
     elif category.name == "Unstructured Tags":
-      guidance = "Select data processing: RAG (text retrieval), Automation (workflows), Document Processing (parsing), Text Analysis (NLP)."
+      guidance = "What data processing? RAG=retrieval, Automation=workflows, Document Processing=parsing, Text Analysis=NLP."
 
     elif category.name == "End User Tags":
-      guidance = "Select user type: Internal (employees), External (customers), Customer-Facing (public), Partner (third-party)."
+      guidance = "Who uses it? Internal=employees, External=customers, Customer-Facing=public, Partner=third-party."
 
     elif category.name == "Production Status":
-      guidance = "Select deployment stage: Production (live), Development (building), POC (pilot/trial), Planning (future)."
+      guidance = "What stage? Production=live, Development=building, POC=trial, Planning=future."
 
     else:
-      guidance = f"Read the document and select options that best match what they describe for {category.name}."
+      guidance = f"Select options for {category.name}."
     
     prompt = f"""Options: {', '.join(category.possible_values)}
 
@@ -922,19 +922,25 @@ JSON: {{"values": ["option"], "evidence": ["text"], "confidence": 0.9}}"""
     
     # Simple guidance focusing on document understanding  
     if category.name == "Industry":
-      guidance = "Read the document and understand what type of business this customer operates. Focus on their core business purpose and industry sector."
+      guidance = "Read the document and identify the customer's PRIMARY industry sector. Return only ONE industry that best describes their main business."
     elif category.name == "Use Case":
       guidance = "Read the document and understand what specific business problem or application they want to solve. Focus on the business value they're trying to create."
     else:
       guidance = f"Read the document and understand what they describe related to {category.name}."
     
-    prompt = f"""Extract values for "{category.name}" from the text.
-
-{guidance}
+    # Special handling for Industry to ensure single value
+    if category.name == "Industry":
+      prompt = f"""{guidance}
 
 Text: "{text}"
 
-Return JSON: {{"values": ["value"], "evidence": ["supporting text"], "confidence": 0.9}}"""
+Return JSON only: {{"values": ["industry"], "evidence": ["text"], "confidence": 0.9}}"""
+    else:
+      prompt = f"""{guidance}
+
+Text: "{text}"
+
+JSON: {{"values": ["value"], "evidence": ["text"], "confidence": 0.9}}"""
 
     # Try Databricks Foundation Model first
     print(f"\n=== INFERRED CATEGORY EXTRACTION: {category.name} ===")
