@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from server.models.schema_models import (
   DEFAULT_PRODUCT_FEEDBACK_SCHEMA,
+  DEFAULT_VECTOR_SEARCH_SCHEMA,
   CategoryValueType,
   CreateSchemaRequest,
   SchemaTemplate,
@@ -21,6 +22,7 @@ router = APIRouter(prefix='/schema', tags=['Schema Management'])
 # In-memory storage for development (will be replaced with Delta Tables)
 _schemas: dict[str, SchemaTemplate] = {
   'default_product_feedback': DEFAULT_PRODUCT_FEEDBACK_SCHEMA,
+  'default_vector_search': DEFAULT_VECTOR_SEARCH_SCHEMA,
 }
 
 
