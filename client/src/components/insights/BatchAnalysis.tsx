@@ -35,7 +35,7 @@ const BatchAnalysis: React.FC<BatchAnalysisProps> = ({ selectedSchemaId }) => {
   const [inputs, setInputs] = useState<BatchInput[]>([
     { id: '1', type: 'text', content: '' }
   ]);
-  const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx'>('xlsx');
+  const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx' | 'preview'>('preview');
   const [showResults, setShowResults] = useState(false);
   const [resultsData, setResultsData] = useState<any[]>([]);
   const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
@@ -48,7 +48,10 @@ const BatchAnalysis: React.FC<BatchAnalysisProps> = ({ selectedSchemaId }) => {
         formData.append('files', file);
       });
       formData.append('schema_template_id', data.schema_template_id);
-      formData.append('export_format', data.export_format);
+      formData.append('export_format', isPreviewOnly ? 'xlsx' : data.export_format);
+      if (isPreviewOnly) {
+        formData.append('preview_only', 'true');
+      }
 
       const response = await fetch('/api/batch/analyze-files-with-preview', {
         method: 'POST',
@@ -98,7 +101,10 @@ const BatchAnalysis: React.FC<BatchAnalysisProps> = ({ selectedSchemaId }) => {
       formData.append('schema_template_id', data.schema_template_id);
       formData.append('texts', JSON.stringify(data.texts));
       formData.append('urls', JSON.stringify(data.urls));
-      formData.append('export_format', data.export_format);
+      formData.append('export_format', isPreviewOnly ? 'xlsx' : data.export_format);
+      if (isPreviewOnly) {
+        formData.append('preview_only', 'true');
+      }
 
       const response = await fetch('/api/batch/analyze-with-preview', {
         method: 'POST',
@@ -435,11 +441,17 @@ const BatchAnalysis: React.FC<BatchAnalysisProps> = ({ selectedSchemaId }) => {
         <CardContent className="space-y-4">
           <div className="flex items-center gap-4">
             <label className="text-sm font-medium">Export Format:</label>
-            <Select value={exportFormat} onValueChange={(value: 'csv' | 'xlsx') => setExportFormat(value)}>
+            <Select value={exportFormat} onValueChange={(value: 'csv' | 'xlsx' | 'preview') => setExportFormat(value as any)}>
               <SelectTrigger className="w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="preview">
+                  <div className="flex items-center gap-2">
+                    <Table className="h-3 w-3" />
+                    Preview Only
+                  </div>
+                </SelectItem>
                 <SelectItem value="xlsx">
                   <div className="flex items-center gap-2">
                     <FileSpreadsheet className="h-3 w-3" />

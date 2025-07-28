@@ -12,7 +12,7 @@ import BatchAnalysis from '@/components/insights/BatchAnalysis';
 const queryClient = new QueryClient();
 
 const InsightsExtractorApp: React.FC = () => {
-  const [activeTab, setActiveTab] = useState('batch');
+  const [activeTab, setActiveTab] = useState('schema'); // Start with schema tab
   const [selectedSchemaId, setSelectedSchemaId] = useState<string | undefined>();
   const [analysisResults, setAnalysisResults] = useState<any>(null);
 
@@ -63,26 +63,45 @@ const InsightsExtractorApp: React.FC = () => {
         {/* Main Interface */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="batch" className="flex items-center gap-2">
-              <FileSpreadsheet className="h-4 w-4" />
-              Batch Process
-            </TabsTrigger>
             <TabsTrigger value="schema" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
-              Schema Builder
+              1. Schema Builder
             </TabsTrigger>
-            <TabsTrigger value="results" className="flex items-center gap-2">
+            <TabsTrigger 
+              value="batch" 
+              className="flex items-center gap-2"
+              disabled={!selectedSchemaId}
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              2. Batch Process
+            </TabsTrigger>
+            <TabsTrigger 
+              value="results" 
+              className="flex items-center gap-2"
+              disabled={!analysisResults}
+            >
               <FileText className="h-4 w-4" />
-              Results
+              3. Results
             </TabsTrigger>
-            <TabsTrigger value="analytics" className="flex items-center gap-2">
+            <TabsTrigger 
+              value="analytics" 
+              className="flex items-center gap-2"
+              disabled={!analysisResults}
+            >
               <BarChart3 className="h-4 w-4" />
-              Analytics
+              4. Analytics
             </TabsTrigger>
           </TabsList>
 
+          {/* Schema Builder Tab - FIRST */}
+          <TabsContent value="schema" className="space-y-6">
+            <SchemaBuilder 
+              onSchemaSelected={handleSchemaSelected}
+              selectedSchemaId={selectedSchemaId}
+            />
+          </TabsContent>
 
-          {/* Batch Processing Tab */}
+          {/* Batch Processing Tab - SECOND */}
           <TabsContent value="batch" className="space-y-6">
             {!selectedSchemaId && (
               <Card className="border-amber-200 bg-amber-50">
@@ -106,14 +125,6 @@ const InsightsExtractorApp: React.FC = () => {
             )}
             
             <BatchAnalysis selectedSchemaId={selectedSchemaId} />
-          </TabsContent>
-
-          {/* Schema Builder Tab */}
-          <TabsContent value="schema" className="space-y-6">
-            <SchemaBuilder 
-              onSchemaSelected={handleSchemaSelected}
-              selectedSchemaId={selectedSchemaId}
-            />
           </TabsContent>
 
           {/* Results Tab */}

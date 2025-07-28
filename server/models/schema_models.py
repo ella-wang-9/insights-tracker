@@ -118,6 +118,63 @@ DEFAULT_PRODUCT_FEEDBACK_SCHEMA = SchemaTemplate(
   created_at=datetime.now(),
 )
 
+DEFAULT_VECTOR_SEARCH_SCHEMA = SchemaTemplate(
+  template_id='default_vector_search',
+  template_name='Vector Search Template',
+  categories=[
+    CategoryDefinition(
+      name='Product',
+      description='Databricks products discussed in the conversation',
+      value_type=CategoryValueType.PREDEFINED,
+      possible_values=[
+        'Vector Search',
+        'Embedding FT',
+        'Unstructured',
+        'MLflow',
+        'Delta Lake',
+        'Unity Catalog',
+      ],
+    ),
+    CategoryDefinition(
+      name='Industry',
+      description="Customer's industry vertical or business sector",
+      value_type=CategoryValueType.INFERRED,
+    ),
+    CategoryDefinition(
+      name='Usage Pattern',
+      description='How the customer uses or plans to use the product',
+      value_type=CategoryValueType.PREDEFINED,
+      possible_values=['Batch', 'Real Time', 'Interactive', 'Scheduled'],
+    ),
+    CategoryDefinition(
+      name='Search Tags',
+      description='Search-related functionality and use cases',
+      value_type=CategoryValueType.PREDEFINED,
+      possible_values=['RAG', 'Matching', 'Search', 'Similarity'],
+    ),
+    CategoryDefinition(
+      name='Unstructured Tags',
+      description='Unstructured data processing capabilities',
+      value_type=CategoryValueType.PREDEFINED,
+      possible_values=['RAG', 'Automation', 'Document Processing', 'Text Analysis'],
+    ),
+    CategoryDefinition(
+      name='End User Tags',
+      description='Type of end users for the application',
+      value_type=CategoryValueType.PREDEFINED,
+      possible_values=['Internal', 'External', 'Customer-Facing', 'Partner'],
+    ),
+    CategoryDefinition(
+      name='Production Status',
+      description='Whether the solution is in production or development',
+      value_type=CategoryValueType.PREDEFINED,
+      possible_values=['Production', 'Development', 'POC', 'Planning'],
+    ),
+  ],
+  is_default=True,
+  created_at=datetime.now(),
+)
+
 DEFAULT_FEATURE_REQUESTS_SCHEMA = SchemaTemplate(
   template_id='default_feature_requests',
   template_name='Feature Requests Template',

@@ -779,55 +779,31 @@ Example: {{"customer_name": "7-Eleven", "meeting_date": "Nov 12, 2024"}}"""
     return None
 
   async def _process_predefined_category(self, text: str, category) -> CategoryResult:
-    """Process a category with predefined values."""
-    # Build specific examples based on category patterns
-    examples = ""
-    category_lower = category.name.lower()
+    """Process a category with predefined values using document comprehension."""
     
-    # Generate examples based on the predefined values
-    if category.possible_values and len(category.possible_values) > 0:
-      # Take first few values as examples
-      example_values = category.possible_values[:3]
-      examples = f"""
-EXAMPLES based on the predefined options:
-{chr(10).join(f'- If text mentions something related to "{val}", select "{val}"' for val in example_values)}
-"""
+    # Simple guidance focusing on document understanding
+    if category.name == "Usage Pattern":
+      guidance = "Read the document and understand HOW they plan to use the solution. Select the pattern that best matches their described operational needs."
+    elif category.name == "Product":
+      guidance = "Read the document and identify which Databricks products they discuss based on the capabilities they describe."
+    elif category.name == "Search Tags":
+      guidance = "Read the document and identify search-related functionality they discuss. Focus on how they use search capabilities."
+    elif category.name == "Unstructured Tags":
+      guidance = "Read the document and identify unstructured data processing capabilities they mention or need."
+    elif category.name == "End User Tags":
+      guidance = "Read the document and understand who the end users of their solution are - internal employees, external customers, etc."
+    elif category.name == "Production Status":
+      guidance = "Read the document and understand whether their solution is in production, development, or planning phase."
+    else:
+      guidance = f"Read the document and select options that best match what they describe for {category.name}."
     
-    # Add pattern-specific guidance
-    if 'pattern' in category_lower or 'usage' in category_lower or 'type' in category_lower:
-      examples += """
-IMPORTANT: Look for keywords that indicate patterns or modes:
-- "real-time", "live", "immediate" → Select "Real-Time" if available
-- "batch", "bulk", "scheduled" → Select "Batch" if available
-- "interactive", "on-demand" → Select "Interactive" if available
-"""
-    elif 'product' in category_lower or 'service' in category_lower:
-      examples += """
-IMPORTANT: Match the exact product names mentioned in the text with the available options.
-"""
-    
-    prompt = f"""Analyze the text and select ONLY from the predefined options for the category "{category.name}".
+    prompt = f"""Select from these options for "{category.name}": {', '.join(category.possible_values)}
 
-CATEGORY: {category.name}
-DESCRIPTION: {category.description or 'No description provided'}
+{guidance}
 
-YOU MUST ONLY CHOOSE FROM THESE OPTIONS:
-{chr(10).join(f'  • {option}' for option in category.possible_values)}
+Text: "{text}"
 
-{examples}
-
-TEXT TO ANALYZE:
-"{text}"
-
-RULES:
-1. ONLY return values from the predefined options list above
-2. Do NOT return any value that is not in the options list
-3. If text mentions "real-time", return "Real-Time" (not "Vector Search")
-4. If no options match, return empty list
-5. Always return at least one value if any of the options are mentioned
-6. Look for ALL mentions throughout the entire document
-
-Return ONLY JSON: {{"values": ["selected_option"], "evidence": ["text that supports this"], "confidence": 0.9}}"""
+Return JSON: {{"values": ["option"], "evidence": ["supporting text"], "confidence": 0.9}}"""
 
     # Try Databricks Foundation Model first
     print(f"\n=== PREDEFINED CATEGORY EXTRACTION: {category.name} ===")
@@ -936,65 +912,23 @@ Return ONLY JSON: {{"values": ["selected_option"], "evidence": ["text that suppo
     )
 
   async def _process_inferred_category(self, text: str, category) -> CategoryResult:
-    """Process a category where values should be inferred by AI."""
-    # Provide category-specific guidance based on common patterns
-    guidance = ""
-    category_lower = category.name.lower()
+    """Process a category where values should be inferred by AI using document comprehension."""
     
-    # Check for common category types and provide appropriate guidance
-    if 'industry' in category_lower or 'sector' in category_lower or 'vertical' in category_lower:
-      guidance = """
-This category is asking about the business sector or industry vertical.
-Examples: "Retail", "Healthcare", "Finance", "E-commerce", "Technology", "Manufacturing", "Media", "Education"
-DO NOT return product names. Return the customer's industry or business sector."""
-    elif 'use case' in category_lower or 'application' in category_lower or 'scenario' in category_lower:
-      guidance = """
-This category is asking about what the customer wants to achieve or how they plan to use the solution.
-Examples: "Store Locator", "Product Recommendations", "Fraud Detection", "Customer Service", "Inventory Management"
-DO NOT return product names. Return the specific use case or application."""
-    elif 'company' in category_lower or 'customer' in category_lower or 'client' in category_lower:
-      guidance = """
-This category is asking about the company or customer name.
-Extract the specific company, organization, or customer name mentioned in the text."""
-    elif 'date' in category_lower or 'time' in category_lower or 'when' in category_lower:
-      guidance = """
-This category is asking about dates or timeframes.
-Extract specific dates, timeframes, or time-related information. Format dates as "MMM DD, YYYY" when possible."""
-    elif 'product' in category_lower or 'service' in category_lower or 'solution' in category_lower:
-      guidance = """
-This category is asking about products or services mentioned.
-Extract specific product names, service names, or solutions discussed."""
-    elif 'pattern' in category_lower or 'usage' in category_lower or 'type' in category_lower:
-      guidance = """
-This category is asking about patterns, types, or modes of usage.
-Extract how something is used, patterns of behavior, or types of implementation."""
+    # Simple guidance focusing on document understanding  
+    if category.name == "Industry":
+      guidance = "Read the document and understand what type of business this customer operates. Focus on their core business purpose and industry sector."
+    elif category.name == "Use Case":
+      guidance = "Read the document and understand what specific business problem or application they want to solve. Focus on the business value they're trying to create."
     else:
-      # Generic guidance based on the category description
-      guidance = f"""
-Based on the category name "{category.name}" and description, extract relevant information.
-Look for specific mentions, facts, or details related to this category.
-Be precise and extract only what is explicitly mentioned or clearly implied."""
+      guidance = f"Read the document and understand what they describe related to {category.name}."
     
-    prompt = f"""Extract values for the category "{category.name}" from the text.
-
-CATEGORY: {category.name}
-DESCRIPTION: {category.description or 'Infer appropriate values from the text'}
+    prompt = f"""Extract values for "{category.name}" from the text.
 
 {guidance}
 
-TEXT TO ANALYZE:
-"{text}"
+Text: "{text}"
 
-INSTRUCTIONS:
-1. For "{category.name}", extract ALL relevant values from the text
-2. Be specific and concise (1-4 words per value)
-3. Focus on what the text actually says about {category.name}
-4. If no relevant information is found, return empty values
-5. Provide evidence from the text to support your extraction
-6. Look through the ENTIRE document, not just the beginning
-7. Be thorough - extract ALL mentions, not just the first one
-
-Return ONLY JSON: {{"values": ["relevant_value"], "evidence": ["supporting text"], "confidence": 0.9}}"""
+Return JSON: {{"values": ["value"], "evidence": ["supporting text"], "confidence": 0.9}}"""
 
     # Try Databricks Foundation Model first
     print(f"\n=== INFERRED CATEGORY EXTRACTION: {category.name} ===")

@@ -35,6 +35,8 @@ interface SchemaBuilderProps {
 
 const SchemaBuilder: React.FC<SchemaBuilderProps> = ({ onSchemaSelected, selectedSchemaId }) => {
   const [isCreating, setIsCreating] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingSchemaId, setEditingSchemaId] = useState<string | null>(null);
   const [newSchema, setNewSchema] = useState<SchemaTemplate>({
     template_name: '',
     categories: []
@@ -60,6 +62,35 @@ const SchemaBuilder: React.FC<SchemaBuilderProps> = ({ onSchemaSelected, selecte
         throw new Error('Failed to fetch templates');
       }
       return await response.json() as SchemaTemplate[];
+    }
+  });
+
+  // Update schema mutation
+  const updateSchemaMutation = useMutation({
+    mutationFn: async ({ templateId, schema }: { templateId: string; schema: { template_name: string; categories: CategoryDefinition[] } }) => {
+      const response = await fetch(`/api/schema/templates/${templateId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(schema)
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || 'Failed to update schema');
+      }
+      
+      return await response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['schema-templates'] });
+      setIsEditing(false);
+      setEditingSchemaId(null);
+      setNewSchema({ template_name: '', categories: [] });
+    },
+    onError: (error) => {
+      console.error('Schema update error:', error);
     }
   });
 
@@ -183,6 +214,35 @@ const SchemaBuilder: React.FC<SchemaBuilderProps> = ({ onSchemaSelected, selecte
     });
   };
 
+  const handleEditSchema = (e: React.MouseEvent, template: SchemaTemplate) => {
+    e.stopPropagation(); // Prevent card selection
+    setEditingSchemaId(template.template_id!);
+    setNewSchema({
+      template_name: template.template_name,
+      categories: [...template.categories]
+    });
+    setIsEditing(true);
+    setIsCreating(true); // Open the dialog
+  };
+
+  const handleUpdateSchema = () => {
+    if (!newSchema.template_name.trim() || newSchema.categories.length === 0) {
+      return;
+    }
+    if (editingSchemaId) {
+      updateSchemaMutation.mutate({ 
+        templateId: editingSchemaId, 
+        schema: newSchema 
+      });
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setEditingSchemaId(null);
+    setNewSchema({ template_name: '', categories: [] });
+  };
+
   return (
     <div className="space-y-6">
       {/* Schema Templates List */}
@@ -198,7 +258,7 @@ const SchemaBuilder: React.FC<SchemaBuilderProps> = ({ onSchemaSelected, selecte
             </DialogTrigger>
             <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>Create New Schema Template</DialogTitle>
+                <DialogTitle>{isEditing ? 'Edit Schema Template' : 'Create New Schema Template'}</DialogTitle>
                 <DialogDescription>
                   Define categories and values for extracting insights from customer notes
                 </DialogDescription>
@@ -372,14 +432,23 @@ const SchemaBuilder: React.FC<SchemaBuilderProps> = ({ onSchemaSelected, selecte
 
                 {/* Create Schema Button */}
                 <div className="flex justify-end gap-2 pt-4 border-t">
-                  <Button variant="outline" onClick={() => setIsCreating(false)}>
+                  <Button variant="outline" onClick={() => {
+                    if (isEditing) {
+                      handleCancelEdit();
+                    }
+                    setIsCreating(false);
+                  }}>
                     Cancel
                   </Button>
                   <Button 
-                    onClick={handleCreateSchema}
-                    disabled={!newSchema.template_name.trim() || newSchema.categories.length === 0 || createSchemaMutation.isPending}
+                    onClick={isEditing ? handleUpdateSchema : handleCreateSchema}
+                    disabled={!newSchema.template_name.trim() || newSchema.categories.length === 0 || 
+                      (isEditing ? updateSchemaMutation.isPending : createSchemaMutation.isPending)}
                   >
-                    {createSchemaMutation.isPending ? 'Creating...' : 'Create Schema'}
+                    {isEditing 
+                      ? (updateSchemaMutation.isPending ? 'Updating...' : 'Update Schema')
+                      : (createSchemaMutation.isPending ? 'Creating...' : 'Create Schema')
+                    }
                   </Button>
                 </div>
 
@@ -420,9 +489,21 @@ const SchemaBuilder: React.FC<SchemaBuilderProps> = ({ onSchemaSelected, selecte
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between mb-2">
                     <h4 className="font-semibold">{template.template_name}</h4>
-                    {template.is_default && (
-                      <Badge variant="secondary" className="text-xs">Default</Badge>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {template.is_default && (
+                        <Badge variant="secondary" className="text-xs">Default</Badge>
+                      )}
+                      {!template.is_default && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={(e) => handleEditSchema(e, template)}
+                          className="h-6 w-6 p-0"
+                        >
+                          <Edit className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                   <p className="text-sm text-gray-600 mb-3">
                     {template.categories.length} categories
